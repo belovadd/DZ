@@ -5,136 +5,204 @@ import requests
 import plotly.express as px
 import os
 
-# 1. СЕТЕВЫЕ НАСТРОЙКИ
-# Отключаем прокси для локальных адресов, чтобы избежать ошибки 502
+# ==========================================
+# 1. НАСТРОЙКИ И ПОДКЛЮЧЕНИЕ
+# ==========================================
 os.environ['NO_PROXY'] = '127.0.0.1'
-
-# 2. ПАРАМЕТРЫ ПОДКЛЮЧЕНИЯ
 BASE_URL = "http://127.0.0.1:8080"
-# API-токен
 API_TOKEN = "rPENZslfEJKgGqPg_VFry4AbL8P2hMyBmgolXoLn"
 
-# Словарь всех таблиц из базы NocoDB
+# Итоговый список таблиц
 TABLES = {
-    "Книги": "myp7iugfdlrjzmr",
-    "Пользователи": "mqgscggr2fwkc70",
-    "Библиотеки": "mfn3zacjj7i9rrq",
-    "Сообщения": "mv7tpodwfr5q04i",
-    "Книжные клубы": "m3gdo93ofe696qh",
-    "Рейтинги книг": "mwwnbvne3kvgw6k",
-    "Обложки книг": "mkqpn7wp4dnj0jy",
-    "Публикации": "m2nqqar2aajek7v",
-    "Настройки таймеров": "m0nxjvdrn59q8w7",
-    "Таймеры по умолчанию": "mz1c8m3yga76781",
-    "Публикации клубов": "mnqq5ff5qdpjcw3"
+    "Статусы книг": "mwwnbvne3kvgw6k",
+    "Распределение по жанру": "myp7iugfdlrjzmr",
+    "Участники книжных клубов": "m3gdo93ofe696qh",
+    "Популярное время чтения": "m0nxjvdrn59q8w7",
+    "Библиотеки": "mfn3zacjj7i9rrq"
 }
 
 app = dash.Dash(__name__)
 
-# 3. ЛОГИКА ОБРАБОТКИ СЛОЖНЫХ ДАННЫХ
-def normalize_value(x):
-    """Превращает объекты и списки NocoDB в читаемый текст."""
-    if x is None: return ""
-    if isinstance(x, (str, int, float, bool)): return str(x)
-    
-    # Если это список (связи Many-to-Many)
-    if isinstance(x, list):
-        return ", ".join([str(i.get("name") or i.get("title") or i.get("Id") or i) 
-                          if isinstance(i, dict) else str(i) for i in x])
-    
-    # Если это словарь (связь One-to-Many)
-    if isinstance(x, dict):
-        return str(x.get("name") or x.get("title") or x.get("Id") or x)
-    
-    return str(x)
+# ==========================================
+# 2. ЛОГИКА ОБРАБОТКИ (УМНАЯ НОРМАЛИЗАЦИЯ)
+# ==========================================
+def smart_normalize(v):
+    if v is None or (isinstance(v, float) and pd.isna(v)): 
+        return 0
+    if isinstance(v, list):
+        return len(v)
+    if isinstance(v, dict):
+        return v.get("name") or v.get("title") or v.get("Id") or 1
+    return str(v)
 
-def process_df(df):
-    """Нормализует все колонки DataFrame."""
-    df = df.copy()
-    for col in df.columns:
-        if df[col].apply(lambda v: isinstance(v, (dict, list))).any():
-            df[col] = df[col].apply(normalize_value)
-    return df
+def prepare_df(df):
+    if df.empty: return df
+    hide = ("nc_", "CreatedAt", "UpdatedAt", "Id")
+    cols = [c for c in df.columns if not any(c.startswith(p) for p in hide)]
+    df = df[cols].copy()
+    return df.map(smart_normalize)
 
-# 4. ВНЕШНИЙ ВИД (ИНТЕРФЕЙС)
+# ==========================================
+# 3. ИНТЕРФЕЙС (LAYOUT)
+# ==========================================
 app.layout = html.Div([
-    html.H1("Dashboard проектов", 
-            style={'textAlign': 'center', 'fontFamily': 'Arial', 'color': '#2c3e50', 'padding': '20px'}),
-    
     html.Div([
-        html.Label("Выберите таблицу для визуализации:", style={'fontWeight': 'bold'}),
-        dcc.Dropdown(
-            id='table-dropdown',
-            options=[{'label': k, 'value': v} for k, v in TABLES.items()],
-            value="myp7iugfdlrjzmr"  # По умолчанию открываем 'Книги'
-        ),
-    ], style={'width': '60%', 'margin': 'auto', 'marginBottom': '30px'}),
+        html.H1("🌳 Ad Quercum: Аналитическая панель", 
+                style={'color': '#2d4d1a', 'textAlign': 'center', 'fontFamily': 'Arial'}),
+        html.P("Визуализация данных дипломного проекта", style={'textAlign': 'center', 'color': '#666'})
+    ], style={'padding': '20px', 'backgroundColor': '#fff', 'borderBottom': '2px solid #e8eedf'}),
 
     html.Div([
-        # Левая часть: График
         html.Div([
-            dcc.Graph(id='data-graph')
-        ], style={'width': '48%', 'display': 'inline-block'}),
-        
-        # Правая часть: Таблица
+            html.Label("Выберите раздел анализа:", style={'fontWeight': 'bold', 'marginBottom': '10px', 'display': 'block'}),
+            dcc.Dropdown(
+                id='master-dropdown',
+                options=[{'label': k, 'value': v} for k, v in TABLES.items()],
+                value="mwwnbvne3kvgw6k",
+                clearable=False
+            ),
+        ], style={'width': '50%', 'margin': '20px auto'}),
+
         html.Div([
-            html.Div(id='table-container')
-        ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'})
-    ], style={'display': 'flex', 'justifyContent': 'space-around', 'padding': '20px'})
-])
+            dcc.Graph(id='main-viz', style={'height': '550px'}),
+        ], style={'backgroundColor': '#fff', 'padding': '20px', 'borderRadius': '12px', 'boxShadow': '0 4px 15px rgba(0,0,0,0.05)'}),
 
-# 5. ВЗАИМОДЕЙСТВИЕ (CALLBACK)
-@app.callback(
-    [Output('table-container', 'children'), Output('data-graph', 'figure')],
-    Input('table-dropdown', 'value')
-)
-def update_dashboard(selected_table_id):
-    url = f"{BASE_URL}/api/v2/tables/{selected_table_id}/records"
-    headers = {"xc-token": API_TOKEN}
-    
-    try:
-        # Запрос к NocoDB с таймаутом 5 секунд
-        response = requests.get(url, headers=headers, params={"limit": 100}, timeout=5)
-        
-        if response.status_code != 200:
-            fig = px.scatter(title=f"Ошибка сервера: {response.status_code}")
-            return html.Div(f"Ошибка доступа. Проверьте VPN и токен!"), fig
-            
-        data = response.json().get('list', [])
-        if not data:
-            return html.Div("В этой таблице нет записей."), px.scatter(title="Пустая таблица")
-            
-        # Загрузка и нормализация данных
-        df = pd.DataFrame(data)
-        clean_df = process_df(df)
-
-        # Выбор колонки для графика (вторая после Id)
-        x_col = clean_df.columns[1] if len(clean_df.columns) > 1 else clean_df.columns[0]
-        
-        # Построение гистограммы в зеленом цвете
-        fig = px.histogram(clean_df.head(30), x=x_col, 
-                           title=f"Распределение по: {x_col}",
-                           template="plotly_white", 
-                           color_discrete_sequence=['#58bd7d'])
-
-        # Создание таблицы данных
-        table = html.Div([
-            html.H3(f"Записей в таблице: {len(clean_df)}"),
+        html.Div([
+            html.H4("Детальная таблица данных", style={'marginTop': '40px', 'color': '#2d4d1a'}),
             dash_table.DataTable(
-                data=clean_df.to_dict('records'),
-                columns=[{"name": i, "id": i} for i in clean_df.columns[:5]], 
+                id='main-table',
                 page_size=10,
-                style_table={'overflowX': 'auto'},
-                style_cell={'textAlign': 'left', 'padding': '10px', 'fontFamily': 'Arial'},
-                style_header={'backgroundColor': '#f2f2f2', 'fontWeight': 'bold'}
+                sort_action="native",
+                filter_action="none",
+                style_table={'overflowX': 'auto', 'borderRadius': '8px'},
+                style_header={'backgroundColor': '#f2f5f0', 'fontWeight': 'bold', 'color': '#2d4d1a'},
+                style_cell={'textAlign': 'left', 'padding': '12px', 'fontFamily': 'Arial', 'fontSize': '13px'}
             )
         ])
+    ], style={'maxWidth': '1100px', 'margin': '0 auto', 'padding': '20px'})
+], style={'backgroundColor': '#fcfdfa', 'minHeight': '100vh'})
+
+# ==========================================
+# 4. CALLBACK (ОБЪЕДИНЕННАЯ АНАЛИТИКА)
+# ==========================================
+@app.callback(
+    [Output('main-viz', 'figure'), Output('main-table', 'data'), Output('main-table', 'columns')],
+    Input('master-dropdown', 'value')
+)
+def update_analytics(table_id):
+    headers = {"xc-token": API_TOKEN}
+    try:
+        res = requests.get(f"{BASE_URL}/api/v2/tables/{table_id}/records", headers=headers, params={"limit": 500}, timeout=10)
+        data = res.json().get('list', [])
         
-        return table, fig
+        if not data:
+            return px.bar(title="Данные в таблице отсутствуют"), [], []
+
+        df = prepare_df(pd.DataFrame(data))
+        cols_low = {c.lower().strip(): c for c in df.columns}
+        
+        oak_palette = ['#5e813f', '#8cae68', '#c2b078', '#a0522d', '#d4be8d']
+        fig = None
+
+        if table_id == "mwwnbvne3kvgw6k":
+            col = cols_low.get('status') or cols_low.get('статус')
+            if col and col in df.columns:
+                counts = df[col].value_counts().reset_index()
+                counts.columns = [col, 'Количество']
+                fig = px.bar(counts, x=col, y='Количество', color=col,
+                             color_discrete_sequence=oak_palette, title="Статусы чтения пользователей")
+            else:
+                fig = px.bar(title="Колонка 'Статус' не найдена")
+
+        elif table_id == "myp7iugfdlrjzmr":
+            col = cols_low.get('genre') or cols_low.get('жанр')
+            if col and col in df.columns:
+                counts = df[col].value_counts().reset_index()
+                counts.columns = ['Жанр', 'Книг']
+                fig = px.bar(counts.sort_values('Книг', ascending=False), x='Жанр', y='Книг', 
+                             color='Жанр', color_discrete_sequence=oak_palette, title="Популярность жанров")
+            else:
+                fig = px.bar(title="Колонка 'Жанр' не найдена")
+
+        elif table_id == "m3gdo93ofe696qh":
+            name_col = cols_low.get('name') or cols_low.get('title') or cols_low.get('клуб') or df.columns[0]
+            member_col = cols_low.get('members') or cols_low.get('участники') or cols_low.get('users')
+            
+            if member_col and member_col in df.columns:
+                df_sorted = df.sort_values(by=member_col, ascending=False).head(15)
+                fig = px.bar(df_sorted, x=name_col, y=member_col,
+                             color=name_col, color_discrete_sequence=oak_palette,
+                             title="Количество участников в книжных клубах")
+                fig.update_layout(xaxis_title="Название клуба", yaxis_title="Количество участников")
+                fig.update_yaxes(dtick=1)
+                fig.update_traces(hovertemplate="Клуб: %{x}<br>Участников: %{y}<extra></extra>")
+            else:
+                fig = px.bar(title="Колонка с участниками не найдена")
+
+        # --- ИСПРАВЛЕННЫЙ КЕЙС 4: ТАЙМЕРЫ ---
+        elif table_id == "m0nxjvdrn59q8w7":
+            col = cols_low.get('setting') or cols_low.get('time') or cols_low.get('время') or cols_low.get('duration')
+            
+            if col and col in df.columns:
+                # ВЫТАСКИВАЕМ ТОЛЬКО ВРЕМЯ (ЧЧ:ММ) И ДОБАВЛЯЕМ ТЕКСТ (Эмодзи)
+                # Это гарантирует, что Plotly не превратит это в 1999 год
+                clean_time = df[col].astype(str).str.extract(r'(\d{2}:\d{2})')[0]
+                # Если регулярка не нашла формат 00:00, оставляем старое значение, иначе добавляем значок
+                df[col] = "⏳ " + clean_time.fillna(df[col].astype(str))
+
+                counts = df[col].value_counts().reset_index()
+                counts.columns = ['Выбранное время', 'Количество пользователей']
+                
+                fig = px.bar(counts.sort_values('Количество пользователей', ascending=False), 
+                             x='Выбранное время', y='Количество пользователей',
+                             color='Выбранное время', color_discrete_sequence=oak_palette,
+                             title="Популярность настроек времени чтения")
+                
+                fig.update_layout(xaxis_title="Настройка таймера", yaxis_title="Сколько раз выбрали")
+                fig.update_yaxes(dtick=1) 
+                fig.update_xaxes(type='category')
+            else:
+                fig = px.bar(title="Колонка со временем ('setting' или 'time') не найдена. Проверьте названия.")
+
+        elif table_id == "mfn3zacjj7i9rrq":
+            lib_name_col = cols_low.get('library') or cols_low.get('библиотека') or cols_low.get('name') or df.columns[0]
+            
+            if lib_name_col and lib_name_col in df.columns:
+                counts = df[lib_name_col].value_counts().reset_index()
+                counts.columns = ['Название библиотеки', 'Количество книг']
+                
+                fig = px.bar(counts, x='Название библиотеки', y='Количество книг',
+                             color='Название библиотеки', color_discrete_sequence=oak_palette,
+                             title="Количество книг в библиотеках")
+                
+                fig.update_layout(xaxis_title="Название библиотеки", yaxis_title="Количество книг")
+                fig.update_yaxes(dtick=1)
+                fig.update_traces(hovertemplate="Библиотека: %{x}<br>Книг: %{y}<extra></extra>")
+            else:
+                fig = px.bar(title="Колонка с названием библиотеки не найдена")
+                
+        else:
+            fig = px.bar(title="График для этой таблицы не настроен")
+
+        # Общие настройки оформления
+        if fig is not None:
+            fig.update_layout(
+                plot_bgcolor='rgba(0,0,0,0)',
+                paper_bgcolor='rgba(0,0,0,0)',
+                font=dict(family="Arial", size=12),
+                showlegend=False
+            )
+            fig.update_yaxes(gridcolor='#eee')
+
+        table_cols = [{"name": i, "id": i} for i in df.columns[:6]]
+        return fig, df.to_dict('records'), table_cols
 
     except Exception as e:
-        return html.Div(f"Критическая ошибка: {str(e)}"), px.scatter(title="Ошибка загрузки")
+        return px.bar(title=f"Ошибка: {e}"), [], []
 
+# ==========================================
+# 5. ЗАПУСК
+# ==========================================
 if __name__ == '__main__':
-    # Запуск на порту 8050
-    app.run(debug=True, port=8050)
+    print("--- Аналитическая панель Ad Quercum готова к работе ---")
+    app.run(debug=True, port=8055, host='127.0.0.1')

@@ -22,6 +22,7 @@ TABLES = {
 }
 
 app = dash.Dash(__name__)
+app.title = "Ad Quercum: Dashboard 🌳" # Название для вкладки браузера
 
 # ==========================================
 # 2. ЛОГИКА ОБРАБОТКИ (УМНАЯ НОРМАЛИЗАЦИЯ)
@@ -46,10 +47,10 @@ def prepare_df(df):
 # 3. ИНТЕРФЕЙС (LAYOUT)
 # ==========================================
 app.layout = html.Div([
+    # Обновленный заголовок
     html.Div([
-        html.H1("🌳 Ad Quercum: Аналитическая панель", 
-                style={'color': '#2d4d1a', 'textAlign': 'center', 'fontFamily': 'Arial'}),
-        html.P("Визуализация данных дипломного проекта", style={'textAlign': 'center', 'color': '#666'})
+        html.H1("Ad Quercum: Dashboard 🌳", 
+                style={'color': '#2d4d1a', 'textAlign': 'center', 'fontFamily': 'Arial', 'margin': '0'})
     ], style={'padding': '20px', 'backgroundColor': '#fff', 'borderBottom': '2px solid #e8eedf'}),
 
     html.Div([
@@ -139,15 +140,11 @@ def update_analytics(table_id):
             else:
                 fig = px.bar(title="Колонка с участниками не найдена")
 
-        # --- ИСПРАВЛЕННЫЙ КЕЙС 4: ТАЙМЕРЫ ---
         elif table_id == "m0nxjvdrn59q8w7":
             col = cols_low.get('setting') or cols_low.get('time') or cols_low.get('время') or cols_low.get('duration')
             
             if col and col in df.columns:
-                # ВЫТАСКИВАЕМ ТОЛЬКО ВРЕМЯ (ЧЧ:ММ) И ДОБАВЛЯЕМ ТЕКСТ (Эмодзи)
-                # Это гарантирует, что Plotly не превратит это в 1999 год
                 clean_time = df[col].astype(str).str.extract(r'(\d{2}:\d{2})')[0]
-                # Если регулярка не нашла формат 00:00, оставляем старое значение, иначе добавляем значок
                 df[col] = "⏳ " + clean_time.fillna(df[col].astype(str))
 
                 counts = df[col].value_counts().reset_index()
